@@ -1,0 +1,182 @@
+doctype html
+html
+  head
+    meta(charset='utf-8')
+    meta(http-equiv='X-UA-Compatible', content='IE=edge')
+    title Mesh Curvatures
+    meta(name='description', content='')
+    meta(name='viewport', content='width=device-width, initial-scale=1')
+
+    style(type='text/css')
+      :stylus
+        html, body
+          margin: 0px
+          width: 100%
+          height: 100%
+          overflow: scroll
+          font-family: Helvetica
+
+        #controls
+          position: fixed
+          top: 0
+          right: 0
+          width: 200px
+          margin: 20px
+          padding: 10px
+          z-index: 10
+          background-color: #444
+
+          label
+            display: inline-block
+            color: #999
+            font-size: 9pt
+
+          input
+            width: 100%
+
+          input + label
+            margin-top: 10px
+
+  body
+    #controls
+
+    script(src='three.min.js')
+    script(src='TrackballControls.js')
+    script(src='OrbitControls.js')
+
+    script(id='vert-shader' type='x-shader/x-vertex').
+      attribute vec3 pdir;
+      attribute vec2 curvs;
+      attribute vec4 dcurvs;
+
+      varying vec3 transformedNormal;
+      varying float k;
+      varying float dkmag;
+
+      void main()
+      {
+        transformedNormal = normalMatrix*normal;
+        k = curvs.x*curvs.y;
+        vec4 abscurvs = abs(dcurvs);
+        dkmag = max(max(abscurvs.x, abscurvs.y), max(abscurvs.z, abscurvs.w));
+        gl_Position = projectionMatrix*modelViewMatrix*vec4(position, 1.0);
+      }
+
+    script(id='frag-shader' type='x-shader/x-fragment').
+      uniform float maxK;
+      uniform float curvSat;
+      uniform float maxDCurv;
+      uniform float dcurvSat;
+      uniform float dcurvBoost;
+      uniform float lightingAmt;
+
+      varying vec3 transformedNormal;
+      varying float k;
+      varying float dkmag;
+
+      void main()
+      {
+        vec3 lightVector = vec3(0.0, 0.0, 1.0);
+        vec3 normedNormal = normalize(transformedNormal);
+
+        float nDotV = clamp(dot(normedNormal, lightVector), 0.0, 1.0);
+        float knorm = curvSat*k/maxK/2.0;
+        float dknorm = pow(dkmag/maxDCurv, 1.0 - dcurvBoost*0.9)*dcurvSat/2.0;
+
+        float shading = 1.0 - lightingAmt*(1.0 - nDotV);
+        vec4 color = shading*vec4(0.5 + knorm, 0.5 + dknorm, 0.5 - knorm, 0.0);
+        gl_FragColor = color + vec4(0.0, 0.0, 0.0, 1.0);
+      }
+
+    script
+      :coffee
+        scene = new THREE.Scene()
+        
+        aspect = window.innerWidth/window.innerHeight
+        camera = new THREE.PerspectiveCamera 20.5, aspect, 0.1, 1000
+        camera.position.z = 7
+        
+        renderer = new THREE.WebGLRenderer()
+        renderer.setSize window.innerWidth, window.innerHeight
+        document.body.appendChild renderer.domElement
+
+        render = ->
+          renderer.render scene, camera
+
+        controls = new THREE.TrackballControls camera, renderer.domElement
+        controls.dampingFactor = 0.01
+        controls.addEventListener 'change', render
+
+        material = new THREE.ShaderMaterial
+          uniforms:
+            maxK: type: 'f', value: 0
+            maxDCurv: type: 'f', value: 0
+            lightingAmt:
+              type: 'f', label: 'Lighting', range: [0, 1], value: 0
+            curvSat:
+              type: 'f', label: 'Curvature', range: [0, 1], value: 1
+            dcurvSat:
+              type: 'f', label: 'Third Order', range: [0, 1], value: 1
+            dcurvBoost:
+              type: 'f', label: 'Third Order Boost', range: [0, 1], value: 0
+          attributes:
+            pdir: {type: 'v3'}
+            curvs: {type: 'v2'}
+            dcurvs: {type: 'v4'}
+          vertexShader: document.getElementById('vert-shader').textContent,
+          fragmentShader: document.getElementById('frag-shader').textContent
+
+        for id, p of material.uniforms
+          if 'label' of p
+            newLabel = document.createElement 'label'
+            newLabel.setAttribute 'for', id
+            newLabel.innerHTML = p.label
+            newSlider = document.createElement 'input'
+            newSlider.setAttribute 'id', id
+            newSlider.setAttribute 'type', 'range'
+            newSlider.setAttribute 'value', p.value
+            newSlider.setAttribute 'min', p.range[0]
+            newSlider.setAttribute 'max', p.range[1]
+            newSlider.setAttribute 'step', 0.01
+            document.getElementById('controls').appendChild newLabel
+            document.getElementById('controls').appendChild newSlider
+
+        loader = new THREE.BufferGeometryLoader()
+        loader.load 'meshes/blob01.json', (geometry) ->
+          curvs = geometry.attributes.curvs
+          maxK = 0
+          for i in [0 ... curvs.length] by curvs.itemSize
+            maxK = Math.max maxK, Math.abs curvs.array[i]*curvs.array[i + 1]
+          material.uniforms.maxK.value = maxK
+
+          dcurvs = geometry.attributes.dcurvs
+          maxDCurv = 0
+          maxDCurv = Math.max maxDCurv, Math.abs dc for dc in dcurvs.array
+          material.uniforms.maxDCurv.value = maxDCurv
+
+          mesh = new THREE.Mesh geometry, material
+          scene.add mesh
+          render()
+
+        animate = ->
+          window.requestAnimationFrame animate
+          for id, p of material.uniforms
+            if 'label' of p
+              p.value = +document.getElementById(id).value
+            
+          controls.update()
+          render()
+        animate()
+
+        window.addEventListener 'resize', ->
+          camera.aspect = window.innerWidth/window.innerHeight
+          camera.updateProjectionMatrix()
+
+          renderer.setSize window.innerWidth, window.innerHeight
+          controls.handleResize()
+
+          render()
+
+        window.addEventListener 'keyup', (event) ->
+          if event.keyCode == 82 # r
+            controls.reset()

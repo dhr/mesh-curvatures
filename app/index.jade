@@ -17,6 +17,18 @@ html
           font-family: Helvetica
           color: #999
 
+        #instructions
+          position: fixed
+          bottom: 0
+          left: 0
+          margin: 20px
+            
+          .instr
+            display: inline-block
+
+            & + .instr
+              margin-left: 40px
+
         #sidebar
           position: fixed
           top: 0
@@ -59,6 +71,11 @@ html
               text-align: right
 
   body
+    #instructions
+      .instr Arrow Keys - Move light (controls spherical coordinates)
+      .instr R - Reset light position and object rotation
+      .instr Shift+R - Reset only light position
+
     #sidebar
       #controls
         label Mesh

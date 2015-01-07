@@ -15,6 +15,18 @@ body {
   font-family: Helvetica;
   color: #999;
 }
+#instructions {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  margin: 20px;
+}
+#instructions .instr {
+  display: inline-block;
+}
+#instructions .instr + .instr {
+  margin-left: 40px;
+}
 #sidebar {
   position: fixed;
   top: 0;
@@ -59,6 +71,11 @@ body {
     </style>
   </head>
   <body>
+    <div id="instructions">
+      <div class="instr">Arrow Keys - Move light (controls spherical coordinates)</div>
+      <div class="instr">R - Reset light position and object rotation</div>
+      <div class="instr">Shift+R - Reset only light position</div>
+    </div>
     <div id="sidebar">
       <div id="controls">
         <label>Mesh</label>

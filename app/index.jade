@@ -14,95 +14,38 @@ html
           width: 100%
           height: 100%
           overflow: scroll
-          font-family: Helvetica
-          color: #999
+          font-family: 'Lucida Grande', sans-serif
+          background-color: #777
+
+        canvas
+          position: absolute
+          top: 0
+          left: 0
+          right: 0
+          bottom: 0
 
         #instructions
           position: fixed
           bottom: 0
-          left: 0
-          margin: 20px
-            
-          .instr
+          width: 100%
+          margin: 0
+          padding: 20px
+          background-color: #333
+          color: #aaa
+
+          li
             display: inline-block
 
-            & + .instr
+            & + li
               margin-left: 40px
 
-        #sidebar
-          position: fixed
-          top: 0
-          right: 0
-          width: 150px
-          margin: 20px
-
-          & div
-            padding: 10px
-            z-index: 10
-            background-color: #444
-
-          div + div
-            margin-top: 20px
-
-          #controls
-            label
-              display: inline-block
-              font-size: 9pt
-
-            select, input
-              display: block
-              width: 100%
-
-            * + label
-              margin-top: 10px
-
-          #info
-            table
-              width: 100%
-              border-collapse: collapse
-
-            td:first-child
-              font-weight: bold
-              text-align: center
-              width: 35px
-              background-color: #555
-
-            pre
-              text-align: right
-
   body
-    #instructions
-      .instr Arrow Keys - Move light (controls spherical coordinates)
-      .instr R - Reset light position and object rotation
-      .instr Shift+R - Reset only light position
-
-    #sidebar
-      #controls
-        label Mesh
-        select#meshSelector
-
-      #info
-        table
-          tr
-            td 𝜅<sub>1</sub>
-            td: pre#k1val
-          tr
-            td 𝜅<sub>2</sub>
-            td: pre#k2val 
-          tr
-            td f
-            td: pre#fval
-          tr
-            td g
-            td: pre#gval
-          tr
-            td h
-            td: pre#hval
-          tr
-            td i
-            td: pre#ival
+    ul#instructions
+      li R - Reset light position and object rotation
+      li Shift+R - Reset only light position
 
     script(src='three.min.js')
+    script(src='dat.gui.min.js')
     script(src='TrackballControls.js')
     script(src='OrbitControls.js')
 
@@ -133,6 +76,7 @@ html
       uniform float dcurvSat;
       uniform float dcurvBoost;
       uniform float lightingAmt;
+      uniform bool hemisphericLighting;
 
       varying vec3 transformedNormal;
       varying float k;
@@ -144,14 +88,19 @@ html
         for (int i = 0; i < MAX_DIR_LIGHTS; i++) {
           vec3 lightVector = normalize(directionalLightDirection[i]);
           vec3 normal = normalize(transformedNormal);
-          nDotV = clamp(dot(normal, lightVector), 0.0, 1.0);
+          nDotV = dot(normal, lightVector);
+          if (hemisphericLighting)
+            nDotV = (nDotV + 1.0)/2.0;
+          else
+            nDotV = max(nDotV, 0.0);
         }
         float knorm = curvSat*k/maxK/2.0;
-        float dknorm = pow(dkmag/maxDCurv, 1.0 - dcurvBoost*0.9)*dcurvSat/2.0;
+        float dknorm = pow(dkmag/maxDCurv, 1.0 - dcurvBoost*0.9)*dcurvSat;
 
         float shading = 1.0 - lightingAmt*(1.0 - nDotV);
-        vec3 color = shading*vec3(0.5 + knorm, 0.5 + dknorm, 0.5 - knorm);
-        gl_FragColor = vec4(color, 1.0);
+        float baseVal = 1.0 - max(curvSat, dcurvSat)/2.0;
+        vec3 color = vec3(baseVal + knorm, baseVal + dknorm, baseVal - knorm);
+        gl_FragColor = vec4(shading*color, 1.0);
       }
 
     script
@@ -162,7 +111,7 @@ html
         camera = new THREE.PerspectiveCamera 20.5, aspect, 0.1, 1000
         camera.position.z = 7
         
-        renderer = new THREE.WebGLRenderer()
+        renderer = new THREE.WebGLRenderer alpha: true
         renderer.setSize window.innerWidth, window.innerHeight
         document.body.appendChild renderer.domElement
 
@@ -178,14 +127,11 @@ html
             THREE.UniformsLib['lights']
             maxK: type: 'f', value: 0
             maxDCurv: type: 'f', value: 0
-            lightingAmt:
-              type: 'f', label: 'Lighting', range: [0, 1], value: 0.5
-            curvSat:
-              type: 'f', label: 'Curvature', range: [0, 1], value: 1
-            dcurvSat:
-              type: 'f', label: 'Third Order', range: [0, 1], value: 1
-            dcurvBoost:
-              type: 'f', label: 'Third Order Boost', range: [0, 1], value: 0
+            lightingAmt: type: 'f', value: 1
+            hemisphericLighting: type: 'i', value: true
+            curvSat: type: 'f', value: 1
+            dcurvSat: type: 'f', value: 1
+            dcurvBoost: type: 'f', value: 0
           ]
           lights: true
           attributes:
@@ -195,47 +141,48 @@ html
           vertexShader: document.getElementById('vertShader').textContent,
           fragmentShader: document.getElementById('fragShader').textContent
 
-        for id, p of material.uniforms
-          if 'label' of p
-            newLabel = document.createElement 'label'
-            newLabel.setAttribute 'for', id
-            newLabel.innerHTML = p.label
-            newSlider = document.createElement 'input'
-            newSlider.setAttribute 'id', id
-            newSlider.setAttribute 'type', 'range'
-            newSlider.setAttribute 'value', p.value
-            newSlider.setAttribute 'min', p.range[0]
-            newSlider.setAttribute 'max', p.range[1]
-            newSlider.setAttribute 'step', 0.01
-            document.getElementById('controls').appendChild newLabel
-            document.getElementById('controls').appendChild newSlider
-
-        meshSelector = document.getElementById('meshSelector')
-        meshes = ['blob01', 'blob06', 'blob07', 'lump000', 'lump001', 'lump002']
-        for meshName in meshes
-          option = document.createElement 'option'
-          option.innerHTML = meshName
-          meshSelector.appendChild option
-
         mesh = new THREE.Mesh new THREE.IcosahedronGeometry(0.2),
           new THREE.MeshBasicMaterial wireframe: true
         scene.add mesh
 
         light = new THREE.DirectionalLight 0xffffff, 0.5
-        lightTheta = 0
-        lightPhi = 0
-        lightAngleInc = Math.PI/2/30
-        setLightPosition = (theta, phi) ->
-          x = Math.sin(theta)*Math.cos(phi)
-          y = Math.sin(phi)
-          z = Math.cos(theta)*Math.cos(phi)
+        light.theta = 0
+        light.phi = 0
+        updateLightPosition = ->
+          t = light.theta*Math.PI/180
+          p = light.phi*Math.PI/180
+          x = Math.sin(t)*Math.cos(p)
+          y = Math.sin(p)
+          z = Math.cos(t)*Math.cos(p)
           light.position.set x, y, z
-        setLightPosition lightTheta, lightPhi
         scene.add light
+
+        meshes = ['blob01', 'blob06', 'blob07',
+          'lump000', 'lump001', 'lump002', 'geosphere']
+        mesh.name = meshes[0]
+
+        mu = material.uniforms
+        gui = new dat.GUI()
+        ctrlFolder = gui.addFolder 'Controls'
+        ctrlFolder.open()
+        ctrlFolder.add(mesh, 'name', meshes).name('Mesh').onChange -> loadMesh()
+        ctrlFolder.add(mu.lightingAmt, 'value', 0, 1).name('Lighting')
+        ctrlFolder.add(mu.hemisphericLighting, 'value').name('Hemispheric')
+        ctrlFolder.add(light, 'theta', -180, 180)
+          .step(1).name('Light 𝜃').listen()
+        ctrlFolder.add(light, 'phi', -90, 90).step(1).name('Light 𝜑').listen()
+        ctrlFolder.add(mu.curvSat, 'value', 0, 1).name('Curvature')
+        ctrlFolder.add(mu.dcurvSat, 'value', 0, 1).name('Third Order')
+        
+        curvatures = {k1: '', k2: '', f: '', g: '', h: '', i: ''}
+        infoFolder = gui.addFolder 'Mesh Info'
+        infoFolder.open()
+        for k of curvatures
+          infoFolder.add(curvatures, k).listen()
 
         loader = new THREE.BufferGeometryLoader()
         loadMesh = ->
-          loader.load "meshes/#{meshSelector.value}.json", (geometry) ->
+          loader.load "meshes/#{mesh.name}.json", (geometry) ->
             curvs = geometry.attributes.curvs
             maxK = -1/0
             for i in [0 ... curvs.length] by curvs.itemSize
@@ -260,17 +207,12 @@ html
 
         animate = ->
           window.requestAnimationFrame animate
-          for id, p of material.uniforms
-            if 'label' of p
-              p.value = +document.getElementById(id).value
-
+          updateLightPosition()
           controls.update()
           render()
 
         loadMesh()
         animate()
-
-        meshSelector.addEventListener 'change', loadMesh
 
         vecConstructors = [0, 0, THREE.Vector2, THREE.Vector3, THREE.Vector4]
         getAttributeVec = (geometry, attrName, index) ->
@@ -288,21 +230,6 @@ html
           index = f.b if distb < dista
           index = f.c if distc < dista && distc < distb
           index
-
-        k1val = document.getElementById 'k1val'
-        k2val = document.getElementById 'k2val'
-        fval = document.getElementById 'fval'
-        gval = document.getElementById 'gval'
-        hval = document.getElementById 'hval'
-        ival = document.getElementById 'ival'
-        clearCurvatureDisplay = ->
-          k1val.innerHTML = ' '
-          k2val.innerHTML = ' '
-          fval.innerHTML = ' '
-          gval.innerHTML = ' '
-          hval.innerHTML = ' '
-          ival.innerHTML = ' '
-        clearCurvatureDisplay()
 
         zeroVec = new THREE.Vector3()
         arrowLen = 0.1
@@ -330,8 +257,9 @@ html
 
         raycaster = new THREE.Raycaster()
         window.addEventListener 'mousemove', (event) ->
-          x = 2*event.clientX/window.innerWidth - 1;
-          y = -2*event.clientY/window.innerHeight + 1;
+          canvas = renderer.domElement
+          x = 2*(event.pageX - canvas.offsetLeft)/canvas.offsetWidth - 1;
+          y = -2*(event.pageY - canvas.offsetTop)/canvas.offsetHeight + 1;
           dir = new THREE.Vector3(x, y, 1).unproject(camera)
           dir.sub(camera.position).normalize()
 
@@ -342,11 +270,10 @@ html
             index = findClosestVertexIndex mesh.geometry, face, point
 
             curvs = getAttributeVec mesh.geometry, 'curvs', index
-            [k1val.innerHTML, k2val.innerHTML] =
-              curvs.toArray().map (n) -> n.toFixed(6)
             dcurvs = getAttributeVec mesh.geometry, 'dcurvs', index
-            [fval.innerHTML, gval.innerHTML, hval.innerHTML, ival.innerHTML] =
-              dcurvs.toArray().map (n) -> n.toFixed(6)
+            c = curvatures
+            [c.k1, c.k2] = curvs.toArray().map (n) -> n.toFixed(5)
+            [c.f, c.g, c.h, c.i] = dcurvs.toArray().map (n) -> n.toFixed(5)
 
             pdir1 = getAttributeVec mesh.geometry, 'pdir', index
             normal = getAttributeVec mesh.geometry, 'normal', index
@@ -364,7 +291,8 @@ html
 
             showArrows true
           else
-            clearCurvatureDisplay()
+            for k of curvatures
+              curvatures[k] = 0
             showArrows false
 
         window.addEventListener 'resize', ->
@@ -374,22 +302,9 @@ html
           renderer.setSize window.innerWidth, window.innerHeight
           controls.handleResize()
 
-        window.addEventListener 'keydown', (event) ->
-          event.preventDefault()
-          if event.keyCode == 39 # Right Arrow
-            lightTheta = Math.min lightTheta + lightAngleInc, Math.PI/2
-          if event.keyCode == 37 # Left Arrow
-            lightTheta = Math.max lightTheta - lightAngleInc, -Math.PI/2
-          if event.keyCode == 38 # Up Arrow
-            lightPhi = Math.min lightPhi + lightAngleInc, Math.PI/2
-          if event.keyCode == 40 # Down Arrow
-            lightPhi = Math.max lightPhi - lightAngleInc, -Math.PI/2
-          setLightPosition lightTheta, lightPhi
-
         window.addEventListener 'keyup', (event) ->
           if event.keyCode == 82 # r
-            lightTheta = 0
-            lightPhi = 0
-            setLightPosition lightTheta, lightPhi
+            light.theta = 0
+            light.phi = 0
             if not event.shiftKey
               controls.reset()

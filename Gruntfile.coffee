@@ -21,17 +21,6 @@ module.exports = (grunt) ->
     
     # Watches files for changes and runs tasks based on the changed files
     watch:
-      coffee:
-        files: ["<%= yeoman.app %>/{,*/}*.{coffee,litcoffee,coffee.md}"]
-        tasks: ["newer:coffee:dist"]
-
-      compass:
-        files: ["<%= yeoman.app %>/{,*/}*.{scss,sass}"]
-        tasks: [
-          "compass:server"
-          "autoprefixer"
-        ]
-      
       jade:
         files: ['<%= yeoman.app %>/{,*/}*.jade']
         tasks: ['jade']
@@ -88,36 +77,8 @@ module.exports = (grunt) ->
 
       server: ".tmp"
 
-    
-    # Add vendor prefixed styles
-    autoprefixer:
-      options:
-        browsers: ["last 1 version"]
 
-      dist:
-        files: [
-          expand: true
-          cwd: ".tmp/styles/"
-          src: "{,*/}*.css"
-          dest: ".tmp/styles/"
-        ]
-
-    
-    # Compiles CoffeeScript to JavaScript
-    coffee:
-      options:
-        sourceMap: true
-        sourceRoot: ""
-
-      dist:
-        files: [
-          expand: true
-          cwd: "<%= yeoman.app %>"
-          src: "{,*/}*.coffee"
-          dest: ".tmp"
-          ext: ".js"
-        ]
-
+    # Process jade files
     jade:
       dist:
         options:
@@ -129,30 +90,6 @@ module.exports = (grunt) ->
           src: '{*,/*}.jade'
           ext: '.html'
         ]
-    
-    # Compiles Sass to CSS and generates necessary files if requested
-    compass:
-      options:
-        sassDir: "<%= yeoman.app %>"
-        cssDir: ".tmp"
-        generatedImagesDir: ".tmp/images/generated"
-        imagesDir: "<%= yeoman.app %>/images"
-        javascriptsDir: "<%= yeoman.app %>/scripts"
-        fontsDir: "<%= yeoman.app %>/styles/fonts"
-        httpImagesPath: "/images"
-        httpGeneratedImagesPath: "/images/generated"
-        httpFontsPath: "/styles/fonts"
-        relativeAssets: false
-        assetCacheBuster: false
-        raw: "Sass::Script::Number.precision = 10\n"
-
-      dist:
-        options:
-          generatedImagesDir: "<%= yeoman.dist %>/images/generated"
-
-      server:
-        options:
-          debugInfo: true
 
 
     # Copies remaining files to places other tasks can use
@@ -180,20 +117,6 @@ module.exports = (grunt) ->
           }
         ]
 
-    
-    # Run some tasks in parallel to speed up the build process
-    concurrent:
-      server: [
-        "coffee:dist"
-        # "compass:server"
-        "jade"
-      ]
-      dist: [
-        "coffee"
-        # "compass:dist"
-        "jade"
-      ]
-
   grunt.registerTask "serve", (target) ->
     if target is "dist"
       return grunt.task.run([
@@ -202,8 +125,7 @@ module.exports = (grunt) ->
       ])
     grunt.task.run [
       "clean:server"
-      "concurrent:server"
-      "autoprefixer"
+      "jade"
       "connect:livereload"
       "watch"
     ]
@@ -211,8 +133,7 @@ module.exports = (grunt) ->
 
   grunt.registerTask "build", [
     "clean:dist"
-    "concurrent:dist"
-    "autoprefixer"
+    "jade"
     "copy:dist"
   ]
   return

@@ -12,117 +12,41 @@ body {
   width: 100%;
   height: 100%;
   overflow: scroll;
-  font-family: Helvetica;
-  color: #999;
+  font-family: 'Lucida Grande', sans-serif;
+  background-color: #777;
+}
+canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 #instructions {
   position: fixed;
   bottom: 0;
-  left: 0;
-  margin: 20px;
+  width: 100%;
+  margin: 0;
+  padding: 20px;
+  background-color: #333;
+  color: #aaa;
 }
-#instructions .instr {
+#instructions li {
   display: inline-block;
 }
-#instructions .instr + .instr {
+#instructions li + li {
   margin-left: 40px;
-}
-#sidebar {
-  position: fixed;
-  top: 0;
-  right: 0;
-  width: 150px;
-  margin: 20px;
-}
-#sidebar div {
-  padding: 10px;
-  z-index: 10;
-  background-color: #444;
-}
-#sidebar div + div {
-  margin-top: 20px;
-}
-#sidebar #controls label {
-  display: inline-block;
-  font-size: 9pt;
-}
-#sidebar #controls select,
-#sidebar #controls input {
-  display: block;
-  width: 100%;
-}
-#sidebar #controls * + label {
-  margin-top: 10px;
-}
-#sidebar #info table {
-  width: 100%;
-  border-collapse: collapse;
-}
-#sidebar #info td:first-child {
-  font-weight: bold;
-  text-align: center;
-  width: 35px;
-  background-color: #555;
-}
-#sidebar #info pre {
-  text-align: right;
 }
 
     </style>
   </head>
   <body>
-    <div id="instructions">
-      <div class="instr">Arrow Keys - Move light (controls spherical coordinates)</div>
-      <div class="instr">R - Reset light position and object rotation</div>
-      <div class="instr">Shift+R - Reset only light position</div>
-    </div>
-    <div id="sidebar">
-      <div id="controls">
-        <label>Mesh</label>
-        <select id="meshSelector"></select>
-      </div>
-      <div id="info">
-        <table>
-          <tr>
-            <td>𝜅<sub>1</sub></td>
-            <td>
-              <pre id="k1val"></pre>
-            </td>
-          </tr>
-          <tr>
-            <td>𝜅<sub>2</sub></td>
-            <td>
-              <pre id="k2val"></pre>
-            </td>
-          </tr>
-          <tr>
-            <td>f</td>
-            <td>
-              <pre id="fval"></pre>
-            </td>
-          </tr>
-          <tr>
-            <td>g</td>
-            <td>
-              <pre id="gval"></pre>
-            </td>
-          </tr>
-          <tr>
-            <td>h</td>
-            <td>
-              <pre id="hval"></pre>
-            </td>
-          </tr>
-          <tr>
-            <td>i</td>
-            <td>
-              <pre id="ival"></pre>
-            </td>
-          </tr>
-        </table>
-      </div>
-    </div>
+    <ul id="instructions">
+      <li>R - Reset light position and object rotation</li>
+      <li>Shift+R - Reset only light position</li>
+    </ul>
     <script src="three.min.js"></script>
+    <script src="dat.gui.min.js"></script>
     <script src="TrackballControls.js"></script>
     <script src="OrbitControls.js"></script>
     <script id="vertShader" type="x-shader/x-vertex">
@@ -153,6 +77,7 @@ body {
       uniform float dcurvSat;
       uniform float dcurvBoost;
       uniform float lightingAmt;
+      uniform bool hemisphericLighting;
       
       varying vec3 transformedNormal;
       varying float k;
@@ -164,19 +89,24 @@ body {
         for (int i = 0; i < MAX_DIR_LIGHTS; i++) {
           vec3 lightVector = normalize(directionalLightDirection[i]);
           vec3 normal = normalize(transformedNormal);
-          nDotV = clamp(dot(normal, lightVector), 0.0, 1.0);
+          nDotV = dot(normal, lightVector);
+          if (hemisphericLighting)
+            nDotV = (nDotV + 1.0)/2.0;
+          else
+            nDotV = max(nDotV, 0.0);
         }
         float knorm = curvSat*k/maxK/2.0;
-        float dknorm = pow(dkmag/maxDCurv, 1.0 - dcurvBoost*0.9)*dcurvSat/2.0;
+        float dknorm = pow(dkmag/maxDCurv, 1.0 - dcurvBoost*0.9)*dcurvSat;
         
         float shading = 1.0 - lightingAmt*(1.0 - nDotV);
-        vec3 color = shading*vec3(0.5 + knorm, 0.5 + dknorm, 0.5 - knorm);
-        gl_FragColor = vec4(color, 1.0);
+        float baseVal = 1.0 - max(curvSat, dcurvSat)/2.0;
+        vec3 color = vec3(baseVal + knorm, baseVal + dknorm, baseVal - knorm);
+        gl_FragColor = vec4(shading*color, 1.0);
       }
       
     </script>
     <script>(function() {
-  var animate, arrowLen, aspect, camera, clearCurvatureDisplay, controls, findClosestVertexIndex, fval, getAttributeVec, gval, hval, id, ival, k1val, k2val, light, lightAngleInc, lightPhi, lightTheta, loadMesh, loader, material, mesh, meshName, meshSelector, meshes, newLabel, newSlider, normalArrow, option, p, pdir1Arrow, pdir2Arrow, raycaster, render, renderer, scene, setLightPosition, showArrows, vecConstructors, zeroVec, _i, _len, _ref;
+  var animate, arrowLen, aspect, camera, controls, ctrlFolder, curvatures, findClosestVertexIndex, getAttributeVec, gui, infoFolder, k, light, loadMesh, loader, material, mesh, meshes, mu, normalArrow, pdir1Arrow, pdir2Arrow, raycaster, render, renderer, scene, showArrows, updateLightPosition, vecConstructors, zeroVec;
 
   scene = new THREE.Scene();
 
@@ -186,7 +116,9 @@ body {
 
   camera.position.z = 7;
 
-  renderer = new THREE.WebGLRenderer();
+  renderer = new THREE.WebGLRenderer({
+    alpha: true
+  });
 
   renderer.setSize(window.innerWidth, window.innerHeight);
 
@@ -215,26 +147,22 @@ body {
         },
         lightingAmt: {
           type: 'f',
-          label: 'Lighting',
-          range: [0, 1],
-          value: 0.5
+          value: 1
+        },
+        hemisphericLighting: {
+          type: 'i',
+          value: true
         },
         curvSat: {
           type: 'f',
-          label: 'Curvature',
-          range: [0, 1],
           value: 1
         },
         dcurvSat: {
           type: 'f',
-          label: 'Third Order',
-          range: [0, 1],
           value: 1
         },
         dcurvBoost: {
           type: 'f',
-          label: 'Third Order Boost',
-          range: [0, 1],
           value: 0
         }
       }
@@ -255,36 +183,6 @@ body {
     fragmentShader: document.getElementById('fragShader').textContent
   });
 
-  _ref = material.uniforms;
-  for (id in _ref) {
-    p = _ref[id];
-    if ('label' in p) {
-      newLabel = document.createElement('label');
-      newLabel.setAttribute('for', id);
-      newLabel.innerHTML = p.label;
-      newSlider = document.createElement('input');
-      newSlider.setAttribute('id', id);
-      newSlider.setAttribute('type', 'range');
-      newSlider.setAttribute('value', p.value);
-      newSlider.setAttribute('min', p.range[0]);
-      newSlider.setAttribute('max', p.range[1]);
-      newSlider.setAttribute('step', 0.01);
-      document.getElementById('controls').appendChild(newLabel);
-      document.getElementById('controls').appendChild(newSlider);
-    }
-  }
-
-  meshSelector = document.getElementById('meshSelector');
-
-  meshes = ['blob01', 'blob06', 'blob07', 'lump000', 'lump001', 'lump002'];
-
-  for (_i = 0, _len = meshes.length; _i < _len; _i++) {
-    meshName = meshes[_i];
-    option = document.createElement('option');
-    option.innerHTML = meshName;
-    meshSelector.appendChild(option);
-  }
-
   mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2), new THREE.MeshBasicMaterial({
     wireframe: true
   }));
@@ -293,40 +191,83 @@ body {
 
   light = new THREE.DirectionalLight(0xffffff, 0.5);
 
-  lightTheta = 0;
+  light.theta = 0;
 
-  lightPhi = 0;
+  light.phi = 0;
 
-  lightAngleInc = Math.PI / 2 / 30;
-
-  setLightPosition = function(theta, phi) {
-    var x, y, z;
-    x = Math.sin(theta) * Math.cos(phi);
-    y = Math.sin(phi);
-    z = Math.cos(theta) * Math.cos(phi);
+  updateLightPosition = function() {
+    var p, t, x, y, z;
+    t = light.theta * Math.PI / 180;
+    p = light.phi * Math.PI / 180;
+    x = Math.sin(t) * Math.cos(p);
+    y = Math.sin(p);
+    z = Math.cos(t) * Math.cos(p);
     return light.position.set(x, y, z);
   };
 
-  setLightPosition(lightTheta, lightPhi);
-
   scene.add(light);
+
+  meshes = ['blob01', 'blob06', 'blob07', 'lump000', 'lump001', 'lump002', 'geosphere'];
+
+  mesh.name = meshes[0];
+
+  mu = material.uniforms;
+
+  gui = new dat.GUI();
+
+  ctrlFolder = gui.addFolder('Controls');
+
+  ctrlFolder.open();
+
+  ctrlFolder.add(mesh, 'name', meshes).name('Mesh').onChange(function() {
+    return loadMesh();
+  });
+
+  ctrlFolder.add(mu.lightingAmt, 'value', 0, 1).name('Lighting');
+
+  ctrlFolder.add(mu.hemisphericLighting, 'value').name('Hemispheric');
+
+  ctrlFolder.add(light, 'theta', -180, 180).step(1).name('Light 𝜃').listen();
+
+  ctrlFolder.add(light, 'phi', -90, 90).step(1).name('Light 𝜑').listen();
+
+  ctrlFolder.add(mu.curvSat, 'value', 0, 1).name('Curvature');
+
+  ctrlFolder.add(mu.dcurvSat, 'value', 0, 1).name('Third Order');
+
+  curvatures = {
+    k1: '',
+    k2: '',
+    f: '',
+    g: '',
+    h: '',
+    i: ''
+  };
+
+  infoFolder = gui.addFolder('Mesh Info');
+
+  infoFolder.open();
+
+  for (k in curvatures) {
+    infoFolder.add(curvatures, k).listen();
+  }
 
   loader = new THREE.BufferGeometryLoader();
 
   loadMesh = function() {
-    return loader.load("meshes/" + meshSelector.value + ".json", function(geometry) {
-      var curvs, dcurvs, f, g, h, i, k1, k2, maxDCurv, maxK, _j, _k, _ref1, _ref2, _ref3, _ref4, _ref5, _ref6;
+    return loader.load("meshes/" + mesh.name + ".json", function(geometry) {
+      var curvs, dcurvs, f, g, h, i, k1, k2, maxDCurv, maxK, _i, _j, _ref, _ref1, _ref2, _ref3, _ref4, _ref5;
       curvs = geometry.attributes.curvs;
       maxK = -1 / 0;
-      for (i = _j = 0, _ref1 = curvs.length, _ref2 = curvs.itemSize; _ref2 > 0 ? _j < _ref1 : _j > _ref1; i = _j += _ref2) {
-        _ref3 = curvs.array.subarray(i, i + 2), k1 = _ref3[0], k2 = _ref3[1];
+      for (i = _i = 0, _ref = curvs.length, _ref1 = curvs.itemSize; _ref1 > 0 ? _i < _ref : _i > _ref; i = _i += _ref1) {
+        _ref2 = curvs.array.subarray(i, i + 2), k1 = _ref2[0], k2 = _ref2[1];
         maxK = Math.max(maxK, Math.abs(k1 * k2));
       }
       material.uniforms.maxK.value = maxK;
       dcurvs = geometry.attributes.dcurvs;
       maxDCurv = -1 / 0;
-      for (i = _k = 0, _ref4 = dcurvs.length, _ref5 = dcurvs.itemSize; _ref5 > 0 ? _k < _ref4 : _k > _ref4; i = _k += _ref5) {
-        _ref6 = dcurvs.array.subarray(i, i + 4), f = _ref6[0], g = _ref6[1], h = _ref6[2], i = _ref6[3];
+      for (i = _j = 0, _ref3 = dcurvs.length, _ref4 = dcurvs.itemSize; _ref4 > 0 ? _j < _ref3 : _j > _ref3; i = _j += _ref4) {
+        _ref5 = dcurvs.array.subarray(i, i + 4), f = _ref5[0], g = _ref5[1], h = _ref5[2], i = _ref5[3];
         maxDCurv = Math.max(maxDCurv, f, g, h, i, -f, -g, -h, -i);
       }
       material.uniforms.maxDCurv.value = maxDCurv;
@@ -340,15 +281,8 @@ body {
   };
 
   animate = function() {
-    var _ref1;
     window.requestAnimationFrame(animate);
-    _ref1 = material.uniforms;
-    for (id in _ref1) {
-      p = _ref1[id];
-      if ('label' in p) {
-        p.value = +document.getElementById(id).value;
-      }
-    }
+    updateLightPosition();
     controls.update();
     return render();
   };
@@ -357,15 +291,13 @@ body {
 
   animate();
 
-  meshSelector.addEventListener('change', loadMesh);
-
   vecConstructors = [0, 0, THREE.Vector2, THREE.Vector3, THREE.Vector4];
 
   getAttributeVec = function(geometry, attrName, index) {
-    var attr, end, start, vec, _ref1;
+    var attr, end, start, vec, _ref;
     attr = geometry.getAttribute(attrName);
     vec = new vecConstructors[attr.itemSize]();
-    _ref1 = [attr.itemSize * index, attr.itemSize * (index + 1)], start = _ref1[0], end = _ref1[1];
+    _ref = [attr.itemSize * index, attr.itemSize * (index + 1)], start = _ref[0], end = _ref[1];
     return vec.fromArray(attr.array.subarray(start, end));
   };
 
@@ -383,29 +315,6 @@ body {
     }
     return index;
   };
-
-  k1val = document.getElementById('k1val');
-
-  k2val = document.getElementById('k2val');
-
-  fval = document.getElementById('fval');
-
-  gval = document.getElementById('gval');
-
-  hval = document.getElementById('hval');
-
-  ival = document.getElementById('ival');
-
-  clearCurvatureDisplay = function() {
-    k1val.innerHTML = ' ';
-    k2val.innerHTML = ' ';
-    fval.innerHTML = ' ';
-    gval.innerHTML = ' ';
-    hval.innerHTML = ' ';
-    return ival.innerHTML = ' ';
-  };
-
-  clearCurvatureDisplay();
 
   zeroVec = new THREE.Vector3();
 
@@ -446,24 +355,26 @@ body {
   raycaster = new THREE.Raycaster();
 
   window.addEventListener('mousemove', function(event) {
-    var arrowPos, curvs, dcurvs, dir, face, index, intxns, normal, pdir1, pdir2, point, vertex, x, y, _ref1, _ref2, _ref3;
-    x = 2 * event.clientX / window.innerWidth - 1;
-    y = -2 * event.clientY / window.innerHeight + 1;
+    var arrowPos, c, canvas, curvs, dcurvs, dir, face, index, intxns, normal, pdir1, pdir2, point, vertex, x, y, _ref, _ref1, _ref2;
+    canvas = renderer.domElement;
+    x = 2 * (event.pageX - canvas.offsetLeft) / canvas.offsetWidth - 1;
+    y = -2 * (event.pageY - canvas.offsetTop) / canvas.offsetHeight + 1;
     dir = new THREE.Vector3(x, y, 1).unproject(camera);
     dir.sub(camera.position).normalize();
     raycaster.set(camera.position, dir);
     intxns = raycaster.intersectObject(mesh);
     if (intxns.length > 0) {
-      _ref1 = [intxns[0].face, intxns[0].point], face = _ref1[0], point = _ref1[1];
+      _ref = [intxns[0].face, intxns[0].point], face = _ref[0], point = _ref[1];
       index = findClosestVertexIndex(mesh.geometry, face, point);
       curvs = getAttributeVec(mesh.geometry, 'curvs', index);
-      _ref2 = curvs.toArray().map(function(n) {
-        return n.toFixed(6);
-      }), k1val.innerHTML = _ref2[0], k2val.innerHTML = _ref2[1];
       dcurvs = getAttributeVec(mesh.geometry, 'dcurvs', index);
-      _ref3 = dcurvs.toArray().map(function(n) {
-        return n.toFixed(6);
-      }), fval.innerHTML = _ref3[0], gval.innerHTML = _ref3[1], hval.innerHTML = _ref3[2], ival.innerHTML = _ref3[3];
+      c = curvatures;
+      _ref1 = curvs.toArray().map(function(n) {
+        return n.toFixed(5);
+      }), c.k1 = _ref1[0], c.k2 = _ref1[1];
+      _ref2 = dcurvs.toArray().map(function(n) {
+        return n.toFixed(5);
+      }), c.f = _ref2[0], c.g = _ref2[1], c.h = _ref2[2], c.i = _ref2[3];
       pdir1 = getAttributeVec(mesh.geometry, 'pdir', index);
       normal = getAttributeVec(mesh.geometry, 'normal', index);
       pdir2 = normal.clone().cross(pdir1);
@@ -477,7 +388,9 @@ body {
       pdir2Arrow.setDirection(pdir2);
       return showArrows(true);
     } else {
-      clearCurvatureDisplay();
+      for (k in curvatures) {
+        curvatures[k] = 0;
+      }
       return showArrows(false);
     }
   });
@@ -489,28 +402,10 @@ body {
     return controls.handleResize();
   });
 
-  window.addEventListener('keydown', function(event) {
-    event.preventDefault();
-    if (event.keyCode === 39) {
-      lightTheta = Math.min(lightTheta + lightAngleInc, Math.PI / 2);
-    }
-    if (event.keyCode === 37) {
-      lightTheta = Math.max(lightTheta - lightAngleInc, -Math.PI / 2);
-    }
-    if (event.keyCode === 38) {
-      lightPhi = Math.min(lightPhi + lightAngleInc, Math.PI / 2);
-    }
-    if (event.keyCode === 40) {
-      lightPhi = Math.max(lightPhi - lightAngleInc, -Math.PI / 2);
-    }
-    return setLightPosition(lightTheta, lightPhi);
-  });
-
   window.addEventListener('keyup', function(event) {
     if (event.keyCode === 82) {
-      lightTheta = 0;
-      lightPhi = 0;
-      setLightPosition(lightTheta, lightPhi);
+      light.theta = 0;
+      light.phi = 0;
       if (!event.shiftKey) {
         return controls.reset();
       }

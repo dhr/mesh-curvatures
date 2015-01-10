@@ -56,12 +56,14 @@ canvas {
       
       varying vec3 transformedNormal;
       varying float k;
+      varying float aniso;
       varying float dkmag;
       
       void main()
       {
         transformedNormal = normalMatrix*normal;
         k = curvs.x*curvs.y;
+        aniso = 1.0 - abs(curvs.y/curvs.x); 
         vec4 abscurvs = abs(dcurvs);
         dkmag = max(max(abscurvs.x, abscurvs.y), max(abscurvs.z, abscurvs.w));
         gl_Position = projectionMatrix*modelViewMatrix*vec4(position, 1.0);
@@ -71,16 +73,18 @@ canvas {
     <script id="fragShader" type="x-shader/x-fragment">
       uniform vec3 directionalLightDirection[MAX_DIR_LIGHTS];
       
-      uniform float maxK;
-      uniform float curvSat;
-      uniform float maxDCurv;
-      uniform float dcurvSat;
-      uniform float dcurvBoost;
       uniform float lightingAmt;
       uniform bool hemisphericLighting;
+      uniform float maxK;
+      uniform float maxAniso;
+      uniform float maxDCurv;
+      uniform float curvSat;
+      uniform float anisoSat;
+      uniform float dcurvSat;
       
       varying vec3 transformedNormal;
       varying float k;
+      varying float aniso;
       varying float dkmag;
       
       void main()
@@ -95,12 +99,13 @@ canvas {
           else
             nDotV = max(nDotV, 0.0);
         }
-        float knorm = curvSat*k/maxK/2.0;
-        float dknorm = pow(dkmag/maxDCurv, 1.0 - dcurvBoost*0.9)*dcurvSat;
+        
+        vec3 color = vec3(1.0 - max(max(curvSat, dcurvSat), anisoSat)/2.0);
+        color.r += curvSat*k/maxK/2.0;
+        color.g += dcurvSat*dkmag/maxDCurv/2.0;
+        color.b += anisoSat*aniso/maxAniso/2.0;
         
         float shading = 1.0 - lightingAmt*(1.0 - nDotV);
-        float baseVal = 1.0 - max(curvSat, dcurvSat)/2.0;
-        vec3 color = vec3(baseVal + knorm, baseVal + dknorm, baseVal - knorm);
         gl_FragColor = vec4(shading*color, 1.0);
       }
       
@@ -137,14 +142,6 @@ canvas {
   material = new THREE.ShaderMaterial({
     uniforms: THREE.UniformsUtils.merge([
       THREE.UniformsLib['lights'], {
-        maxK: {
-          type: 'f',
-          value: 0
-        },
-        maxDCurv: {
-          type: 'f',
-          value: 0
-        },
         lightingAmt: {
           type: 'f',
           value: 1
@@ -153,17 +150,29 @@ canvas {
           type: 'i',
           value: true
         },
+        maxK: {
+          type: 'f',
+          value: 0
+        },
+        maxAniso: {
+          type: 'f',
+          value: 0
+        },
+        maxDCurv: {
+          type: 'f',
+          value: 0
+        },
         curvSat: {
           type: 'f',
           value: 1
         },
+        anisoSat: {
+          type: 'f',
+          value: 0.5
+        },
         dcurvSat: {
           type: 'f',
           value: 1
-        },
-        dcurvBoost: {
-          type: 'f',
-          value: 0
         }
       }
     ]),
@@ -207,7 +216,7 @@ canvas {
 
   scene.add(light);
 
-  meshes = ['blob01', 'blob06', 'blob07', 'lump000', 'lump001', 'lump002', 'geosphere'];
+  meshes = ['blob01', 'blob06', 'blob07', 'lump000', 'lump001', 'lump002', 'sphere', 'ellipsoid', 'pancake'];
 
   mesh.name = meshes[0];
 
@@ -233,6 +242,8 @@ canvas {
 
   ctrlFolder.add(mu.curvSat, 'value', 0, 1).name('Curvature');
 
+  ctrlFolder.add(mu.anisoSat, 'value', 0, 1).name('Anisotropy');
+
   ctrlFolder.add(mu.dcurvSat, 'value', 0, 1).name('Third Order');
 
   curvatures = {
@@ -256,14 +267,17 @@ canvas {
 
   loadMesh = function() {
     return loader.load("meshes/" + mesh.name + ".json", function(geometry) {
-      var curvs, dcurvs, f, g, h, i, k1, k2, maxDCurv, maxK, _i, _j, _ref, _ref1, _ref2, _ref3, _ref4, _ref5;
+      var curvs, dcurvs, f, g, h, i, k1, k2, maxAniso, maxDCurv, maxK, _i, _j, _ref, _ref1, _ref2, _ref3, _ref4, _ref5;
       curvs = geometry.attributes.curvs;
       maxK = -1 / 0;
+      maxAniso = -1 / 0;
       for (i = _i = 0, _ref = curvs.length, _ref1 = curvs.itemSize; _ref1 > 0 ? _i < _ref : _i > _ref; i = _i += _ref1) {
         _ref2 = curvs.array.subarray(i, i + 2), k1 = _ref2[0], k2 = _ref2[1];
         maxK = Math.max(maxK, Math.abs(k1 * k2));
+        maxAniso = Math.max(maxAniso, 1 - Math.abs(k2 / k1));
       }
       material.uniforms.maxK.value = maxK;
+      material.uniforms.maxAniso.value = maxAniso;
       dcurvs = geometry.attributes.dcurvs;
       maxDCurv = -1 / 0;
       for (i = _j = 0, _ref3 = dcurvs.length, _ref4 = dcurvs.itemSize; _ref4 > 0 ? _j < _ref3 : _j > _ref3; i = _j += _ref4) {

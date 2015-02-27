@@ -41,13 +41,12 @@ html
 
   body
     ul#instructions
-      li R - Reset light position and object rotation
-      li Shift+R - Reset only light position
+      li R - Reset object rotation
+      li Shift+R - Reset light position
 
     script(src='three.min.js')
     script(src='dat.gui.min.js')
     script(src='TrackballControls.js')
-    script(src='OrbitControls.js')
 
     script(id='vertShader' type='x-shader/x-vertex').
       attribute vec3 pdir;
@@ -62,18 +61,22 @@ html
       void main()
       {
         transformedNormal = normalMatrix*normal;
-        k = curvs.x*curvs.y;
-        aniso = 1.0 - abs(curvs.y/curvs.x); 
-        vec4 abscurvs = abs(dcurvs);
-        dkmag = max(max(abscurvs.x, abscurvs.y), max(abscurvs.z, abscurvs.w));
+        float k1 = curvs.x, k2 = curvs.y,
+              f = dcurvs.x, g = dcurvs.y, h = dcurvs.z, i = dcurvs.w;
+        k = k1*k2;
+        aniso = 1.0 - abs(k2/k1);
+        dkmag = max(max(abs(f), abs(g)), max(abs(h), abs(i)));
+        // dkmag = log(abs(k1*k1*(h*h - g*i) + k2*k2*(g*g - f*h)) + 1.0);
         gl_Position = projectionMatrix*modelViewMatrix*vec4(position, 1.0);
       }
 
     script(id='fragShader' type='x-shader/x-fragment').
       uniform vec3 directionalLightDirection[MAX_DIR_LIGHTS];
 
+      uniform mat3 normalMatrix;
       uniform float lightingAmt;
-      uniform bool hemisphericLighting;
+      uniform bool sphericalHarmonicsLighting;
+      uniform int intensityLevels;
       uniform float maxK;
       uniform float maxAniso;
       uniform float maxDCurv;
@@ -93,10 +96,23 @@ html
           vec3 lightVector = normalize(directionalLightDirection[i]);
           vec3 normal = normalize(transformedNormal);
           nDotV = dot(normal, lightVector);
-          if (hemisphericLighting)
-            nDotV = (nDotV + 1.0)/2.0;
+          if (sphericalHarmonicsLighting) {
+            mat4 L = mat4(-0.0230,  0.0102, -0.0043,  0.0043,
+                           0.0102, -0.0145, -0.0069,  0.0069,
+                          -0.0043, -0.0069,  0.0259,  0.0295,
+                           0.0043,  0.0069,  0.0295,  0.0738);
+   
+            vec3 axis = cross(vec3(0.0, 0.0, 1.0), lightVector);
+            float cosTheta = lightVector.z;
+            float sinTheta = -length(axis);
+            axis = normalize(axis);
+            vec3 nrot = normal*cosTheta + cross(axis, normal)*sinTheta +
+                        axis*dot(axis, normal)*(1.0 - cosTheta);
+            vec4 naug = vec4(nrot, 1.0);
+            nDotV = dot(naug, L*naug)/0.1585;
+          }
           else
-            nDotV = max(nDotV, 0.0);
+            nDotV = (nDotV + 1.0)/2.0;
         }
 
         vec3 color = vec3(1.0 - max(max(curvSat, dcurvSat), anisoSat)/2.0);
@@ -105,6 +121,8 @@ html
         color.b += anisoSat*aniso/maxAniso/2.0;
 
         float shading = 1.0 - lightingAmt*(1.0 - nDotV);
+        float numLevels = float(intensityLevels);
+        shading = floor(shading*numLevels)/numLevels;
         gl_FragColor = vec4(shading*color, 1.0);
       }
 
@@ -131,7 +149,8 @@ html
           uniforms: THREE.UniformsUtils.merge [
             THREE.UniformsLib['lights']
             lightingAmt: type: 'f', value: 1
-            hemisphericLighting: type: 'i', value: true
+            sphericalHarmonicsLighting: type: 'i', value: true
+            intensityLevels: type: 'i', value: 256
             maxK: type: 'f', value: 0
             maxAniso: type: 'f', value: 0
             maxDCurv: type: 'f', value: 0
@@ -176,7 +195,9 @@ html
         ctrlFolder.open()
         ctrlFolder.add(mesh, 'name', meshes).name('Mesh').onChange -> loadMesh()
         ctrlFolder.add(mu.lightingAmt, 'value', 0, 1).name('Lighting')
-        ctrlFolder.add(mu.hemisphericLighting, 'value').name('Hemispheric')
+        ctrlFolder.add(mu.sphericalHarmonicsLighting, 'value')
+          .name('SH Lighting')
+        ctrlFolder.add(mu.intensityLevels, 'value', 10, 256).name('Levels')
         ctrlFolder.add(light, 'theta', -180, 180)
           .step(1).name('Light 𝜃').listen()
         ctrlFolder.add(light, 'phi', -90, 90)
@@ -185,11 +206,14 @@ html
         ctrlFolder.add(mu.anisoSat, 'value', 0, 1).name('Anisotropy')
         ctrlFolder.add(mu.dcurvSat, 'value', 0, 1).name('Third Order')
         
-        curvatures = {k1: '', k2: '', f: '', g: '', h: '', i: ''}
+        meshInfo = {
+          k1: '', k2: '', f: '', g: '', h: '', i: '',
+          gauss: '', mean: '', aniso: ''
+        }
         infoFolder = gui.addFolder 'Mesh Info'
         infoFolder.open()
-        for k of curvatures
-          infoFolder.add(curvatures, k).listen()
+        for k of meshInfo
+          infoFolder.add(meshInfo, k).listen()
 
         loader = new THREE.BufferGeometryLoader()
         loadMesh = ->
@@ -207,8 +231,10 @@ html
             dcurvs = geometry.attributes.dcurvs
             maxDCurv = -1/0
             for i in [0 ... dcurvs.length] by dcurvs.itemSize
+              [k1, k2] = curvs.array.subarray i/4, i/4 + 2
               [f, g, h, i] = dcurvs.array.subarray(i, i + 4)
               maxDCurv = Math.max maxDCurv, f, g, h, i, -f, -g, -h, -i
+              # maxDCurv = Math.max maxDCurv, Math.log 1 + Math.abs k1*k1*(h*h - g*i) + k2*k2*(g*g - f*h)
             material.uniforms.maxDCurv.value = maxDCurv
 
             scene.remove mesh
@@ -283,11 +309,13 @@ html
             [face, point] = [intxns[0].face, intxns[0].point]
             index = findClosestVertexIndex mesh.geometry, face, point
 
-            curvs = getAttributeVec mesh.geometry, 'curvs', index
-            dcurvs = getAttributeVec mesh.geometry, 'dcurvs', index
-            c = curvatures
-            [c.k1, c.k2] = curvs.toArray().map (n) -> n.toFixed(5)
-            [c.f, c.g, c.h, c.i] = dcurvs.toArray().map (n) -> n.toFixed(5)
+            [k1, k2] = getAttributeVec(mesh.geometry, 'curvs', index).toArray()
+            dcurvs = getAttributeVec(mesh.geometry, 'dcurvs', index).toArray()
+            c = meshInfo
+            [c.k1, c.k2] = [k1, k2].map (n) -> n.toFixed(5)
+            tmp = [k1*k2, (k1 + k2)/2, 1 - Math.abs k2/k1]
+            [c.gauss, c.mean, c.aniso] = tmp.map (n) -> n.toFixed(5)
+            [c.f, c.g, c.h, c.i] = dcurvs.map (n) -> n.toFixed(5)
 
             pdir1 = getAttributeVec mesh.geometry, 'pdir', index
             normal = getAttributeVec mesh.geometry, 'normal', index
@@ -305,8 +333,8 @@ html
 
             showArrows true
           else
-            for k of curvatures
-              curvatures[k] = 0
+            for k of meshInfo
+              meshInfo[k] = ''
             showArrows false
 
         window.addEventListener 'resize', ->
@@ -318,7 +346,8 @@ html
 
         window.addEventListener 'keyup', (event) ->
           if event.keyCode == 82 # r
-            light.theta = 0
-            light.phi = 0
             if not event.shiftKey
               controls.reset()
+            else
+              light.theta = 0
+              light.phi = 0

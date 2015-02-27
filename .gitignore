@@ -4,3 +4,4 @@ dist
 node_modules
 exportMeshes.m
 prefilter.c
+orientSHLight.m
